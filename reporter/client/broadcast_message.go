@@ -76,15 +76,8 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 			if pairLabel == "" {
 				pairLabel = "unknown"
 			}
-			telemetry.IncrCounterWithLabels(
-				[]string{"daemon_price_guard", "blocked"},
-				1,
-				[]metrics.Label{
-					{Name: "chain_id", Value: c.cosmosCtx.ChainID},
-					{Name: "query_id", Value: hex.EncodeToString(queryIdHex)},
-					{Name: "pair", Value: pairLabel},
-				},
-			)
+			
+			telemetry.IncrCounterWithLabels([]string{"daemon_price_guard", "blocked"}, 1, []metrics.Label{{Name: "chain_id", Value: c.cosmosCtx.ChainID}, {Name: "query_id", Value: hex.EncodeToString(queryIdHex)}, {Name: "pair", Value: pairLabel}})
 
 			if pair != "" {
 				return fmt.Errorf("price guard blocked submission for %s: %s", pair, reason)
