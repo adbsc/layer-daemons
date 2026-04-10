@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
@@ -71,8 +74,19 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Pass prometheusPort to NewApp
-		daemons.NewApp(logger, chainId, grpcAddr, homePath, prometheusPort)
+		// Set up signal handling for graceful shutdown
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+
+		// Pass prometheusPort and signal context to NewApp
+		appInstance := daemons.NewApp(ctx, logger, chainId, grpcAddr, homePath, prometheusPort)
+
+		// Wait for signal
+		<-ctx.Done()
+		logger.Info("Received shutdown signal, shutting down gracefully...")
+
+		// Gracefully shutdown
+		appInstance.Shutdown()
 	},
 }
 
@@ -120,10 +134,9 @@ func init() {
 	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
 	// We'll validate them in the Run function instead
 
-	// Try to load .env from current directory, or parent directory if not found
-	// .env file is optional, so we ignore errors - allows daemon to run without .env
+	// Try to load .env from current directory, or parent directory if not found.
+	// .env file is optional — allows the daemon to run without one if env vars are set another way.
 	if err := godotenv.Load(); err != nil {
-		// Try parent directory (for when running from daemons/ subdirectory)
 		_ = godotenv.Load("../.env")
 	}
 
