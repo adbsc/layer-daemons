@@ -158,7 +158,7 @@ func (c *Client) ProcessPendingTips() error {
 	}
 
 	// Verify this is a TRBBridge query
-	if queryType != "TRBBridge" {
+	if queryType != "TRBBridgeV2" {
 		c.logger.Error("Invalid query type for tip", "queryType", queryType)
 		c.tokenBridgeTipsCache.RemoveOldestTip()
 		return nil
