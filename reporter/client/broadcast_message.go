@@ -76,13 +76,44 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 			if pairLabel == "" {
 				pairLabel = "unknown"
 			}
-			
+
 			telemetry.IncrCounterWithLabels([]string{"daemon_price_guard", "blocked"}, 1, []metrics.Label{{Name: "chain_id", Value: c.cosmosCtx.ChainID}, {Name: "query_id", Value: hex.EncodeToString(queryIdHex)}, {Name: "pair", Value: pairLabel}})
 
 			if pair != "" {
 				return fmt.Errorf("price guard blocked submission for %s: %s", pair, reason)
 			}
 			return fmt.Errorf("price guard blocked submission for queryId %x: %s", queryIdHex, reason)
+		}
+	}
+
+	// Check optional external reference-price guard before submitting.
+	if c.ReferencePriceGuard != nil && c.ReferencePriceGuard.Enabled() {
+		shouldSubmit, reason, deviation, err := c.ReferencePriceGuard.ShouldSubmit(ctx, qd, rawPrice)
+		if err != nil {
+			return fmt.Errorf("reference price guard check failed: %w", err)
+		}
+
+		pair, _ := supportedQueryIdsStr.GetPair(qd)
+		telemetry.SetGaugeWithLabels(
+			[]string{"daemon_reference_price_guard", "deviation"},
+			float32(deviation),
+			[]metrics.Label{
+				{Name: "chain_id", Value: c.cosmosCtx.ChainID},
+				{Name: "pair", Value: pair},
+			},
+		)
+
+		if !shouldSubmit {
+			telemetry.IncrCounterWithLabels([]string{"daemon_reference_price_guard", "blocked"}, 1, []metrics.Label{
+				{Name: "chain_id", Value: c.cosmosCtx.ChainID},
+				{Name: "pair", Value: pair},
+				{Name: "reason", Value: reason},
+			})
+
+			if pair != "" {
+				return fmt.Errorf("reference price guard blocked submission for %s: %s", pair, reason)
+			}
+			return fmt.Errorf("reference price guard blocked submission for pair %x: %s", qd, reason)
 		}
 	}
 

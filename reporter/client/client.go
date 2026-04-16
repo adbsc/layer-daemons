@@ -75,6 +75,9 @@ type Client struct {
 	logger     log.Logger
 	txChan     chan TxChannelInfo
 	PriceGuard *PriceGuard
+	// ReferencePriceSource is optional. If nil, reference-price guard stays disabled.
+	ReferencePriceSource ReferencePriceSource
+	ReferencePriceGuard  *ReferencePriceGuard
 
 	// Resources that need cleanup
 	grpcConn    *grpc.ClientConn
@@ -102,6 +105,12 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 		minGasFee: valGasMin,
 		txChan:    txChan,
 	}
+}
+
+// SetReferencePriceSource injects an optional external reference price provider.
+// Call this before Start() to enable reference-price guard checks.
+func (c *Client) SetReferencePriceSource(source ReferencePriceSource) {
+	c.ReferencePriceSource = source
 }
 
 func (c *Client) Start(
@@ -186,6 +195,12 @@ func (c *Client) Start(
 
 	c.PriceGuard = NewPriceGuard(priceGuardThreshold, priceGuardMaxAge, priceGuardEnabled, updateOnBlocked, c.logger)
 
+	referencePriceMaxDeviation := viper.GetFloat64("reference-price-max-deviation")
+	if referencePriceMaxDeviation < 0 {
+		return fmt.Errorf("reference-price-max-deviation must be greater than or equal to 0, got: %f", referencePriceMaxDeviation)
+	}
+	c.ReferencePriceGuard = NewReferencePriceGuard(c.ReferencePriceSource, referencePriceMaxDeviation, c.logger)
+
 	// Read auto unbonding configuration
 	autoUnbondingFrequency := viper.GetUint32("auto-unbonding-frequency")
 	autoUnbondingAmount := viper.GetUint32("auto-unbonding-amount")
@@ -213,6 +228,18 @@ func (c *Client) Start(
 		)
 	} else {
 		c.logger.Info("Price guard disabled")
+	}
+
+	if c.ReferencePriceGuard.Enabled() {
+		c.logger.Info("Reference price guard enabled",
+			"max_deviation", fmt.Sprintf("%.5f%%", referencePriceMaxDeviation*100),
+		)
+	} else if referencePriceMaxDeviation > 0 && c.ReferencePriceSource == nil {
+		c.logger.Info("Reference price guard disabled (no provider implementation configured)",
+			"max_deviation", fmt.Sprintf("%.5f%%", referencePriceMaxDeviation*100),
+		)
+	} else {
+		c.logger.Info("Reference price guard disabled")
 	}
 
 	if autoUnbondingFrequency > 0 {

@@ -119,6 +119,7 @@ func init() {
 	rootCmd.Flags().Float64("price-guard-threshold", 0, "Price change threshold (0.5 = 50%, 0.01 = 1% (up to 15 decimals)) - submissions exceeding this will be blocked")
 	rootCmd.Flags().Duration("price-guard-max-age", 0, "Maximum age of stored price before treating as expired (e.g. 1m, 1h)")
 	rootCmd.Flags().Bool("price-guard-update-on-blocked", false, "Update last known price even if submission is blocked (default false)")
+	rootCmd.Flags().Float64("reference-price-max-deviation", 0, "Maximum allowed deviation from an external reference price (0 disables reference-price guard; requires provider implementation)")
 
 	// Test mode flag
 	rootCmd.Flags().BoolVar(&testMode, "test", false, "Test mode: verify price feed configurations and calculate medians without starting daemon")

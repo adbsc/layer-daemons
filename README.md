@@ -120,6 +120,7 @@ The Price Guard is a safety mechanism that prevents the reporter from submitting
 | `--price-guard-threshold` | float64 | Maximum allowed percentage change (e.g., 0.5 = 50%). Submissions exceeding this change from the last reported price will be blocked. | Yes |
 | `--price-guard-max-age` | duration | Time after which a stored price is considered expired (e.g., "1h"). If the last price is expired, the new price is accepted regardless of deviation. | Yes |
 | `--price-guard-update-on-blocked` | bool | If true, updates the internal "last known price" to the new value even if submission was blocked. If false, keeps the old price as the baseline. | Yes |
+| `--reference-price-max-deviation` | float64 | Maximum allowed deviation from the Blocksize VWAP reference (e.g., 0.1 = 10%). When greater than zero, the reporter wires a Blocksize client if it initializes successfully; lookups need `BLOCKSIZE_API_KEY`. | No |
 
 ### Notes
 
@@ -131,3 +132,16 @@ The Price Guard is a safety mechanism that prevents the reporter from submitting
 4. **Update on Blocked:**
    - If `true`: A blocked price becomes the new baseline for future checks.
    - If `false`: The old price remains the baseline; future submissions must be within threshold of the *old* price.
+
+## Reference Price Guard (optional)
+
+An additional guard compares the computed median spot price to a **Blocksize** VWAP for the same instrument before publishing.
+
+- **Enable:** set `--reference-price-max-deviation` greater than zero (default `0`, disabled). Values are fractions (e.g. `0.05` = 5% max deviation).
+- **Startup:** when the flag is set, the daemon constructs a Blocksize-backed `ReferencePriceSource` and attaches it to the reporter client. If that initialization fails, the guard stays off even though the flag is set.
+- **API key:** set `BLOCKSIZE_API_KEY` in the environment or in a `.env` file loaded at process start (same pattern as `cmd/main.go`). Without a key, reference lookups fail and the guard **fails open** (warns, does not block).
+- **Supported queries:** only query IDs present in the reporter’s built-in Blocksize map participate; others fail open for the reference check.
+- **Telemetry:** on each reference check, a gauge records the measured deviation (ratio, e.g. `0.1` = 10%):
+  - `daemon_reference_price_guard_deviation` — labels: `chain_id`, `pair` (reference ticker such as `ETHUSD`, or empty if unknown).
+- **Blocks:** if deviation exceeds the maximum, submission is blocked and counter `daemon_reference_price_guard_blocked` is incremented with labels `chain_id`, `pair`, `reason`.
+- **Advanced:** you can still replace the source by calling `SetReferencePriceSource` on the reporter client before `Start` if you integrate the library differently.
