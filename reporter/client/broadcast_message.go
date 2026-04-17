@@ -100,11 +100,15 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 			)
 
 			if !shouldSubmit {
-				telemetry.IncrCounterWithLabels([]string{"daemon_reference_price_guard", "blocked"}, 1, []metrics.Label{
-					{Name: "chain_id", Value: c.cosmosCtx.ChainID},
-					{Name: "pair", Value: pair},
-					{Name: "reason", Value: reason},
-				})
+				telemetry.IncrCounterWithLabels(
+					[]string{"daemon_reference_price_guard", "blocked"},
+					1,
+					[]metrics.Label{
+						{Name: "chain_id", Value: c.cosmosCtx.ChainID},
+						{Name: "pair", Value: pair},
+						{Name: "reason", Value: reason},
+					},
+				)
 
 				if pair != "" {
 					return fmt.Errorf("reference price guard blocked submission for %s: %s", pair, reason)
