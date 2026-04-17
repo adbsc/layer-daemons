@@ -88,32 +88,31 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 
 	// Check optional external reference-price guard before submitting.
 	if c.ReferencePriceGuard != nil && c.ReferencePriceGuard.Enabled() {
-		shouldSubmit, reason, deviation, err := c.ReferencePriceGuard.ShouldSubmit(ctx, qd, rawPrice)
-		if err != nil {
-			return fmt.Errorf("reference price guard check failed: %w", err)
-		}
+		if shouldSubmit, reason, deviation, err := c.ReferencePriceGuard.ShouldSubmit(ctx, qd, rawPrice); err == nil {
+			pair, _ := supportedQueryIdsStr.GetPair(qd)
+			telemetry.SetGaugeWithLabels(
+				[]string{"daemon_reference_price_guard", "deviation"},
+				float32(deviation),
+				[]metrics.Label{
+					{Name: "chain_id", Value: c.cosmosCtx.ChainID},
+					{Name: "pair", Value: pair},
+				},
+			)
 
-		pair, _ := supportedQueryIdsStr.GetPair(qd)
-		telemetry.SetGaugeWithLabels(
-			[]string{"daemon_reference_price_guard", "deviation"},
-			float32(deviation),
-			[]metrics.Label{
-				{Name: "chain_id", Value: c.cosmosCtx.ChainID},
-				{Name: "pair", Value: pair},
-			},
-		)
+			if !shouldSubmit {
+				telemetry.IncrCounterWithLabels([]string{"daemon_reference_price_guard", "blocked"}, 1, []metrics.Label{
+					{Name: "chain_id", Value: c.cosmosCtx.ChainID},
+					{Name: "pair", Value: pair},
+					{Name: "reason", Value: reason},
+				})
 
-		if !shouldSubmit {
-			telemetry.IncrCounterWithLabels([]string{"daemon_reference_price_guard", "blocked"}, 1, []metrics.Label{
-				{Name: "chain_id", Value: c.cosmosCtx.ChainID},
-				{Name: "pair", Value: pair},
-				{Name: "reason", Value: reason},
-			})
-
-			if pair != "" {
-				return fmt.Errorf("reference price guard blocked submission for %s: %s", pair, reason)
+				if pair != "" {
+					return fmt.Errorf("reference price guard blocked submission for %s: %s", pair, reason)
+				}
+				return fmt.Errorf("reference price guard blocked submission for pair %x: %s", qd, reason)
 			}
-			return fmt.Errorf("reference price guard blocked submission for pair %x: %s", qd, reason)
+		} else {
+			c.logger.Error("reference price guard check failed", "error", err)
 		}
 	}
 
