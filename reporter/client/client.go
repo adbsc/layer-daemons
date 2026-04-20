@@ -76,9 +76,6 @@ type Client struct {
 	logger     log.Logger
 	txChan     chan TxChannelInfo
 	PriceGuard *PriceGuard
-	// ReferencePriceSource is optional. If nil, reference-price guard stays disabled.
-	ReferencePriceSource ReferencePriceSource
-	ReferencePriceGuard  *ReferencePriceGuard
 
 	// Resources that need cleanup
 	grpcConn    *grpc.ClientConn
@@ -86,6 +83,10 @@ type Client struct {
 	wg          sync.WaitGroup
 	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
 	stopOnce    sync.Once
+
+	// ReferencePriceSource is optional. If nil, reference-price guard stays disabled.
+	ReferencePriceSource ReferencePriceSource
+	ReferencePriceGuard  *ReferencePriceGuard
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
