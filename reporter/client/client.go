@@ -76,6 +76,9 @@ type Client struct {
 	logger     log.Logger
 	txChan     chan TxChannelInfo
 	PriceGuard *PriceGuard
+	// Gas estimate refresh interval; <=0 disables periodic refresh.
+	refreshGasEstimatesInterval time.Duration
+	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
 	grpcConn    *grpc.ClientConn
@@ -106,6 +109,16 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 		logger:    logger,
 		minGasFee: valGasMin,
 		txChan:    txChan,
+		gasEstimator: newGasEstimateState(map[string]gasBucketConfig{
+			bridgeGasBucketKey: {
+				levels:  []float64{1.75, 2.0},
+				baseIdx: 0,
+			},
+			defaultNonBridgeBucketConfigKey: {
+				levels:  []float64{1.25, 1.6, 2.0},
+				baseIdx: 0,
+			},
+		}),
 	}
 }
 
@@ -207,6 +220,7 @@ func (c *Client) Start(
 	autoUnbondingFrequency := viper.GetUint32("auto-unbonding-frequency")
 	autoUnbondingAmount := viper.GetUint32("auto-unbonding-amount")
 	autoUnbondingMaxStakePercentage := viper.GetString("auto-unbonding-max-stake-percentage")
+	c.refreshGasEstimatesInterval = viper.GetDuration("refresh-gas-estimates-interval")
 
 	if autoUnbondingFrequency > 0 {
 		if autoUnbondingAmount == 0 {
@@ -252,6 +266,11 @@ func (c *Client) Start(
 		)
 	} else {
 		c.logger.Info("Auto unbonding disabled")
+	}
+	if c.refreshGasEstimatesInterval > 0 {
+		c.logger.Info("Periodic gas estimate refresh enabled", "interval", c.refreshGasEstimatesInterval.String())
+	} else {
+		c.logger.Info("Periodic gas estimate refresh disabled")
 	}
 
 	c.cosmosCtx = c.cosmosCtx.WithChainID(chainId)
@@ -361,7 +380,29 @@ func StartReporterDaemonTaskLoop(
 	wg.Add(1)
 	go client.AutoUnbondStakePeriodically(ctx, wg)
 
+	if client.refreshGasEstimatesInterval > 0 {
+		wg.Add(1)
+		go client.RefreshGasEstimatesPeriodically(ctx, wg)
+	}
+
 	wg.Wait()
+}
+
+func (c *Client) RefreshGasEstimatesPeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.NewTicker(c.refreshGasEstimatesInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Debug("RefreshGasEstimatesPeriodically: context canceled, exiting")
+			return
+		case <-ticker.C:
+			c.logger.Info("Refreshing gas estimate buckets to base levels")
+			c.resetAllGasLevelsToBase()
+		}
+	}
 }
 
 func (c *Client) checkReporter(ctx context.Context) bool {

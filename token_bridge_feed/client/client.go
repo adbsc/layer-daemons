@@ -72,6 +72,40 @@ func StartNewClient(ctx context.Context, logger log.Logger, tokenDepositsCache *
 	return client
 }
 
+// waitForContractInitialized polls until query returns (true, nil), or ctx ends.
+// On query errors it waits retryDelay between attempts (interruptible by ctx).
+func waitForContractInitialized(ctx context.Context, logger log.Logger, retryDelay time.Duration, query func() (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			logger.Debug("TokenBridgeClient: context canceled during contract init wait")
+			return err
+		}
+
+		initialized, err := query()
+		if err != nil {
+			logger.Error("Failed to check initialization status, retrying...", "error", err)
+			select {
+			case <-ctx.Done():
+				logger.Debug("TokenBridgeClient: context canceled during contract init wait")
+				return ctx.Err()
+			case <-time.After(retryDelay):
+			}
+			continue
+		}
+		if initialized {
+			logger.Info("Contract is initialized, starting deposit monitoring")
+			return nil
+		}
+		logger.Info("Contract not yet initialized, waiting...")
+		select {
+		case <-ctx.Done():
+			logger.Debug("TokenBridgeClient: context canceled during contract init wait")
+			return ctx.Err()
+		case <-time.After(retryDelay):
+		}
+	}
+}
+
 func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips) *Client {
 	logger = logger.With(log.ModuleKey, "tokenbridge-daemon")
 	client := &Client{
@@ -88,35 +122,34 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 }
 
 func (c *Client) start(ctx context.Context) {
+	// If we exit before signaling startup complete, Stop() must not block on daemonStartup forever.
+	startupSignaled := false
+	defer func() {
+		if !startupSignaled {
+			c.daemonStartup.Done()
+		}
+	}()
+
 	// Initialize clients and contracts first (needed to check initialization status)
 	if err := c.initializeClientsAndContracts(); err != nil {
 		c.logger.Error("Failed to initialize clients and contracts", "error", err)
 		return
 	}
 
+	const initRetryDelay = 2 * time.Minute
+
 	// Wait for contract to be initialized before starting the main loop
 	c.logger.Info("Waiting for contract to be initialized...")
-	for {
-		initialized, err := c.QueryHasContractBeenInitialized()
-		if err != nil {
-			c.logger.Error("Failed to check initialization status, retrying...", "error", err)
-			time.Sleep(2 * time.Minute)
-			continue
-		}
-		if initialized {
-			c.logger.Info("Contract is initialized, starting deposit monitoring")
-			break
-		}
-		c.logger.Info("Contract not yet initialized, waiting...")
-		time.Sleep(2 * time.Minute)
+	if err := waitForContractInitialized(ctx, c.logger, initRetryDelay, c.QueryHasContractBeenInitialized); err != nil {
+		return
 	}
 
 	if err := c.InitializeDeposits(); err != nil {
 		c.logger.Error("Failed to initialize deposits", "error", err)
-		c.daemonStartup.Done()
 		return
 	}
 	// Mark startup as complete after initialization
+	startupSignaled = true
 	c.daemonStartup.Done()
 
 	ticker := time.NewTicker(10 * time.Second)

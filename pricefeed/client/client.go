@@ -137,6 +137,14 @@ func (c *Client) start(ctx context.Context,
 	exchangeIdToExchangeDetails map[types.ExchangeId]types.ExchangeQueryDetails,
 	subTaskRunner SubTaskRunner,
 ) (err error) {
+	// Release daemonStartup on any exit before the normal "startup complete" point (avoids Stop() blocking forever).
+	startupCompleted := false
+	defer func() {
+		if !startupCompleted {
+			c.daemonStartup.Done()
+		}
+	}()
+
 	// 1. Establish connections to gRPC servers.
 	queryConn, err := grpcClient.NewTcpConnection(ctx, grpcAddress)
 	if err != nil {
@@ -246,6 +254,7 @@ func (c *Client) start(ctx context.Context,
 	// Now that all persistent subtasks have been started and all tickers and stop channels are created,
 	// signal that the startup process is complete. This needs to be called before entering the
 	// price updater loop, which loops indefinitely until the daemon is stopped.
+	startupCompleted = true
 	c.daemonStartup.Done()
 
 	pricefeedClient := servertypes.NewPriceFeedServiceClient(daemonConn)
