@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math"
+	"math/big"
+	"strings"
 	"time"
 
 	"github.com/tellor-io/layer-daemons/lib/metrics"
@@ -87,8 +90,20 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 	}
 
 	// Check optional external reference-price guard before submitting.
-	if c.ReferencePriceGuard != nil && c.ReferencePriceGuard.Enabled() {
-		if shouldSubmit, reason, deviation, err := c.ReferencePriceGuard.ShouldSubmit(ctx, qd, rawPrice); err == nil {
+	if c.ReferencePriceGuard != nil && c.ReferencePriceGuard.Enabled() && rawPrice > 0 {
+		var value float64
+		for _, marketParam := range c.MarketParams {
+			if strings.EqualFold(marketParam.QueryData, hex.EncodeToString(qd)) {
+				exp := big.NewFloat(math.Pow10(int(marketParam.Exponent)))
+				value, _ = new(big.Float).
+					Mul(big.NewFloat(rawPrice), exp).Float64()
+				break
+			}
+		}
+		if value == 0 {
+			return fmt.Errorf("no value found for query data: %x", qd)
+		}
+		if shouldSubmit, reason, deviation, err := c.ReferencePriceGuard.ShouldSubmit(ctx, qd, value); err == nil {
 			pair, _ := supportedQueryIdsStr.GetPair(qd)
 			telemetry.SetGaugeWithLabels(
 				[]string{"daemon_reference_price_guard", "deviation"},
