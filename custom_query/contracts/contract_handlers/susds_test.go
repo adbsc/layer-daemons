@@ -78,7 +78,7 @@ func TestSUSDSHandler_FetchValue(t *testing.T) {
 			handler := &SUSDSHandler{}
 			ctx := context.Background()
 
-			value, err := handler.FetchValue(ctx, contractReader, nil) // sUSDS doesn't use price cache
+			value, err := handler.FetchValue(ctx, contractReader, nil, 0) // sUSDS doesn't use price cache
 
 			if tt.expectError {
 				assert.Error(t, err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	contract_handlers "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_handlers"
@@ -28,7 +29,9 @@ func (h *SFRXUSDPriceHandler) FetchValue(
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
 	minResponses int,
 	maxSpreadPercent float64,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	// validate eth contract reader
 	contractReader, exists := contractReaders["ethereum"]
 	if !exists {
@@ -37,22 +40,13 @@ func (h *SFRXUSDPriceHandler) FetchValue(
 
 	fetcher := NewParallelFetcher()
 
-	// get sFrx contract data
+	// get sFrx contract price-per-share ratio
 	fetcher.FetchContract(
 		ctx,
-		"total_assets",
+		"price_per_share",
 		contractReader,
 		contract_handlers.SFRXUSD_CONTRACT,
-		"totalAssets() returns (uint256)",
-		nil,
-	)
-
-	fetcher.FetchContract(
-		ctx,
-		"total_supply",
-		contractReader,
-		contract_handlers.SFRXUSD_CONTRACT,
-		"totalSupply() returns (uint256)",
+		"pricePerShare() returns (uint256)",
 		nil,
 	)
 
@@ -75,32 +69,28 @@ func (h *SFRXUSDPriceHandler) FetchValue(
 
 	fetcher.Wait()
 
-	// parse contract data
-	totalAssetsBytes, err := fetcher.GetBytes("total_assets")
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("sfrxusd: %w", err)
+	}
+
+	// parse contract data (pricePerShare is scaled by 1e18)
+	pricePerShareBytes, err := fetcher.GetBytes("price_per_share")
 	if err != nil {
-		return 0, fmt.Errorf("failed to get totalAssets: %w", err)
+		return 0, fmt.Errorf("failed to get pricePerShare: %w", err)
 	}
 
-	totalSupplyBytes, err := fetcher.GetBytes("total_supply")
-	if err != nil {
-		return 0, fmt.Errorf("failed to get totalSupply: %w", err)
+	pricePerShare := new(big.Int).SetBytes(pricePerShareBytes)
+	if pricePerShare.Sign() == 0 {
+		return 0, fmt.Errorf("invalid pricePerShare: zero")
 	}
 
-	totalAssets := new(big.Int).SetBytes(totalAssetsBytes)
-	totalSupply := new(big.Int).SetBytes(totalSupplyBytes)
-
-	// prevent division by zero
-	if totalSupply.Sign() == 0 {
-		return 0, fmt.Errorf("invalid total supply: zero")
-	}
-
-	// calculate fundamental rate (total assets / total supply)
+	divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
 	fundamentalRate := new(big.Float).Quo(
-		new(big.Float).SetInt(totalAssets),
-		new(big.Float).SetInt(totalSupply),
+		new(big.Float).SetInt(pricePerShare),
+		new(big.Float).SetInt(divisor),
 	)
 	fundamentalRateFloat, _ := fundamentalRate.Float64()
-	log.Infof("[sFRXUSD] Fundamental rate: %f", fundamentalRateFloat)
+	log.Infof("[sFRXUSD] Fundamental rate (pricePerShare): %f", fundamentalRateFloat)
 
 	var frxPrices []float64
 

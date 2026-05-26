@@ -45,23 +45,22 @@ var rootCmd = &cobra.Command{
 
 		// Check if test mode is enabled
 		if testMode {
-			if err := runTestMode(homePath, logger); err != nil {
+			if err := runTestMode(homePath, logger, testQueryID); err != nil {
 				fmt.Printf("Test mode failed: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)
 		}
+		if testQueryID != "" {
+			fmt.Fprintf(os.Stderr, "Error: --test-query-id requires --test\n")
+			os.Exit(1)
+		}
 
 		// Normal daemon mode - validate required flags
-		chainId := viper.GetString(flags.FlagChainID)
 		grpcAddr := viper.GetString(flags.FlagGRPC)
 		from := viper.GetString(flags.FlagFrom)
 		node := viper.GetString(flags.FlagNode)
 
-		if chainId == "" {
-			fmt.Printf("Error: --chain-id is required in reporter mode\n")
-			os.Exit(1)
-		}
 		if grpcAddr == "" {
 			fmt.Printf("Error: --grpc is required in reporter mode\n")
 			os.Exit(1)
@@ -79,6 +78,13 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
+		chainId, err := detectChainID(ctx, grpcAddr, node)
+		if err != nil {
+			fmt.Printf("Error: could not detect chain ID: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Info("Detected chain ID", "chain_id", chainId)
+
 		// Pass prometheusPort and signal context to NewApp
 		appInstance := daemons.NewApp(ctx, logger, chainId, grpcAddr, homePath, prometheusPort)
 
@@ -94,6 +100,7 @@ var rootCmd = &cobra.Command{
 var (
 	prometheusPort int
 	testMode       bool
+	testQueryID    string
 )
 
 func main() {
@@ -108,7 +115,6 @@ func init() {
 	rootCmd.Flags().String(flags.FlagHome, appconfig.DefaultNodeHome, "Node home directory")
 	rootCmd.Flags().String(flags.FlagFrom, "", "Name of the key to use")
 	rootCmd.Flags().String(flags.FlagGRPC, "0.0.0.0:9090", "Address to listen on")
-	rootCmd.Flags().String(flags.FlagChainID, "layer", "Chain ID")
 	rootCmd.Flags().String(flags.FlagKeyringBackend, flags.DefaultKeyringBackend, "Select keyring's backend (os|file|kwallet|pass|test|memory)")
 	rootCmd.Flags().String(flags.FlagLogLevel, zerolog.InfoLevel.String(), "The logging level (trace|debug|info|warn|error|fatal|panic|disabled or '*:<level>,<key>:<level>')")
 	rootCmd.Flags().String(flags.FlagBroadcastMode, flags.BroadcastSync, "Transaction broadcasting mode (sync|async)")
@@ -124,6 +130,7 @@ func init() {
 
 	// Test mode flag
 	rootCmd.Flags().BoolVar(&testMode, "test", false, "Test mode: verify price feed configurations and calculate medians without starting daemon")
+	rootCmd.Flags().StringVar(&testQueryID, "test-query-id", "", "With --test, only run this custom query id (64-char hex); skips exchange/market tests. Exits non-zero if the query fails.")
 	// Automatic Unbonding flags
 	rootCmd.Flags().Uint32("auto-unbonding-frequency", 0, "Enable automatic unbonding every N days (0 = disabled, 1 - 21 days = valid")
 	rootCmd.Flags().Uint32("auto-unbonding-amount", 0, "Amount of tokens in loya to unbond each unbonding transaction (0 = disabled)")
@@ -134,7 +141,7 @@ func init() {
 	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
 		panic(err)
 	}
-	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
+	// Note: --from, --grpc, and --node are only required in normal mode, not test mode
 	// We'll validate them in the Run function instead
 
 	// Try to load .env from current directory, or parent directory if not found.

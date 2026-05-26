@@ -138,7 +138,7 @@ func TestWSTETHHandler_FetchValue(t *testing.T) {
 			handler := &WSTETHHandler{}
 			ctx := context.Background()
 
-			value, err := handler.FetchValue(ctx, contractReader, priceCache)
+			value, err := handler.FetchValue(ctx, contractReader, priceCache, 0)
 
 			if tt.expectError {
 				assert.Error(t, err)

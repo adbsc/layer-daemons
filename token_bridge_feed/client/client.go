@@ -27,6 +27,7 @@ type Client struct {
 	logger                   log.Logger
 	tokenDepositsCache       *tokenbridgetypes.DepositReports
 	tokenBridgeTipsCache     *tokenbridgetipstypes.DepositTips
+	chainID                  string
 	daemonStartup            sync.WaitGroup
 	runningSubtasksWaitGroup sync.WaitGroup
 	tickers                  []*time.Ticker
@@ -36,6 +37,13 @@ type Client struct {
 	fallbackEthClient      *ethclient.Client
 	primaryBridgeContract  *tokenbridge.TokenBridgeV2
 	fallbackBridgeContract *tokenbridge.TokenBridgeV2
+}
+
+const tokenBridgeTestContractEnv = "TOKEN_BRIDGE_TEST_CONTRACT"
+
+var tokenBridgeContractByChainID = map[string]string{
+	"tellor-1":    "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E",
+	"layertest-5": "0x55355157703A44f7516FBB831333317E98944e32",
 }
 
 type DepositReceipt struct {
@@ -60,10 +68,10 @@ type APIResponse struct {
 	} `json:"data"`
 }
 
-func StartNewClient(ctx context.Context, logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips) *Client {
+func StartNewClient(ctx context.Context, logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips, chainID string) *Client {
 	logger.Info("Starting tokenbridge daemon")
 
-	client := newClient(logger, tokenDepositsCache, tokenBridgeTipsCache)
+	client := newClient(logger, tokenDepositsCache, tokenBridgeTipsCache, chainID)
 	client.runningSubtasksWaitGroup.Add(1)
 	go func() {
 		defer client.runningSubtasksWaitGroup.Done()
@@ -106,7 +114,7 @@ func waitForContractInitialized(ctx context.Context, logger log.Logger, retryDel
 	}
 }
 
-func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips) *Client {
+func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips, chainID string) *Client {
 	logger = logger.With(log.ModuleKey, "tokenbridge-daemon")
 	client := &Client{
 		tickers:              []*time.Ticker{},
@@ -114,6 +122,7 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 		logger:               logger,
 		tokenDepositsCache:   tokenDepositsCache,
 		tokenBridgeTipsCache: tokenBridgeTipsCache,
+		chainID:              strings.TrimSpace(chainID),
 	}
 
 	// Set the client's daemonStartup state to indicate that the daemon has not finished starting up.
@@ -537,12 +546,20 @@ func (c *Client) EncodeReportValue(depositReceipt DepositReceipt) ([]byte, error
 }
 
 func (c *Client) getTokenBridgeContractAddress() (common.Address, error) {
-	tokenBridgeContractAddress := os.Getenv("TOKEN_BRIDGE_CONTRACT")
-	if tokenBridgeContractAddress == "" {
-		return common.Address{}, fmt.Errorf("TOKEN_BRIDGE_CONTRACT not set")
-	} else {
-		fmt.Println("TOKEN_BRIDGE_CONTRACT", tokenBridgeContractAddress)
+	chainID := strings.ToLower(strings.TrimSpace(c.chainID))
+	if tokenBridgeContractAddress, ok := tokenBridgeContractByChainID[chainID]; ok {
+		c.logger.Info("Using token bridge contract", "chain_id", c.chainID, "address", tokenBridgeContractAddress)
+		return common.HexToAddress(tokenBridgeContractAddress), nil
 	}
+
+	tokenBridgeContractAddress := strings.TrimSpace(os.Getenv(tokenBridgeTestContractEnv))
+	if tokenBridgeContractAddress == "" {
+		return common.Address{}, fmt.Errorf("unsupported chain ID %q for token bridge contract; set %s for local/custom chains", c.chainID, tokenBridgeTestContractEnv)
+	}
+	if !common.IsHexAddress(tokenBridgeContractAddress) {
+		return common.Address{}, fmt.Errorf("%s is not a valid ethereum address", tokenBridgeTestContractEnv)
+	}
+	c.logger.Info("Using fallback token bridge contract", "chain_id", c.chainID, "env_var", tokenBridgeTestContractEnv, "address", tokenBridgeContractAddress)
 	return common.HexToAddress(tokenBridgeContractAddress), nil
 }
 

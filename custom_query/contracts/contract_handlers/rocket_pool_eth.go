@@ -21,10 +21,15 @@ type RocketPoolETHHandler struct{}
 func (r *RocketPoolETHHandler) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, RETH_CONTRACT, "getExchangeRate() returns (uint256)", nil)
 	if err != nil {
 		return 0, err
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("reth: %w", err)
 	}
 	// Get rETH exchange rate from contract (how much ETH 1 rETH is worth)
 	rethExchangeRate := new(big.Int).SetBytes(result)

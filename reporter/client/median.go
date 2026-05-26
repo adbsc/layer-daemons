@@ -39,9 +39,31 @@ func (c *Client) median(querydata []byte) (encodedValue string, rawPrice float64
 		return "", 0, fmt.Errorf("no config found for query data: %s", querydatastr)
 	}
 	results, err := customquery.FetchPrice(context.Background(), queryConfig, c.MarketToExchange)
+	c.logCustomQuerySourceErrors(queryIdStr, results)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to fetch price: %w", err)
 	}
 	// For custom queries, we return 0 for raw price (price guard won't apply)
 	return results.EncodedValue, 0, nil
+}
+
+func (c *Client) logCustomQuerySourceErrors(queryId string, results *customquery.FetchPriceResult) {
+	if results == nil {
+		return
+	}
+
+	for _, result := range results.RawResults {
+		if result.Err == nil {
+			continue
+		}
+
+		c.logger.Error(
+			"custom query source failed",
+			"query_id", queryId,
+			"source_id", result.SourceId,
+			"endpoint_id", result.EndpointID,
+			"market_id", result.MarketId,
+			"error", result.Err,
+		)
+	}
 }

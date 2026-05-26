@@ -4,24 +4,50 @@ import "github.com/tellor-io/layer-daemons/exchange_common"
 
 var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 	"coingecko": {
-		URLTemplate: "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
+	},
+	"coingeckoPro": {
+		URLTemplate:    "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}",
+		Method:         "GET",
+		Timeout:        5000,
+		ApiKey:         "${CGPRO_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"coinpaprika": {
-		URLTemplate: "https://api.coinpaprika.com/v1/tickers/{coin_id}?quotes=USD",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coinpaprika.com/v1/tickers/{coin_id}?quotes=USD",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"curve": {
-		URLTemplate: "https://prices.curve.finance/v1/usd_price/ethereum/{contract_address}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://prices.curve.finance/v1/usd_price/ethereum/{contract_address}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
+	},
+	// curveSusdeFactoryStableNg: fixed getPools URL for factory-stable-ng (legacy name). Use with curve_factory_price
+	// and params target_token, exclude_pools, merge_get_pools_url (see curveEthereumGetPools for parameterized registry).
+	"curveSusdeFactoryStableNg": {
+		URLTemplate:    "https://api.curve.fi/api/getPools/ethereum/factory-stable-ng",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
+	},
+	// curveEthereumGetPools: Curve getPools for ethereum/{registry}. Params: registry (URL), plus handler params on Reader.
+	"curveEthereumGetPools": {
+		URLTemplate:    "https://api.curve.fi/api/getPools/ethereum/{registry}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"crypto": {
-		URLTemplate: "https://api.crypto.com/v2/public/get-ticker?instrument_name={instrument_name}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.crypto.com/v2/public/get-ticker?instrument_name={instrument_name}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"coinmarketcap": {
 		URLTemplate: "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?id={id}",
@@ -32,40 +58,57 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 			"Accept":            "application/json",
 			"X-CMC_PRO_API_KEY": "api_key",
 		},
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"coinbase": {
-		URLTemplate: "https://api.coinbase.com/v2/prices/{currency_pair}/spot",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coinbase.com/v2/prices/{currency_pair}/spot",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 	"osmosis": {
-		URLTemplate: "https://lcd.osmosis.zone/osmosis/gamm/v1beta1/pools/{pool_id}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://lcd.osmosis.zone/osmosis/gamm/v1beta1/pools/{pool_id}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 86400, // 24 hours — uses native last_liquidity_update timestamp
 	},
 	"uniswapV4ethereum": {
-		// docs: https://docs.uniswap.org/api/subgraph/overview
-		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
-		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
-		Method:      "POST",
-		Timeout:     5000,
-		Headers:     map[string]string{"Content-Type": "application/json"},
-		ApiKey:      "${SUBGRAPH_API_KEY}",
+		// docs: https://docs.uniswap.org/api/subgraph/overview — requires SUBGRAPH_API_KEY in the environment.
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
+		Query:          `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — indexed data can lag behind chain head
+	},
+	// theGraphUniswapStylePool: The Graph gateway + Uniswap v3/v4 Pool entity (token0/token1 + token0Price/token1Price).
+	// Params: subgraph_id, pool_id, target_token, quote_token for subgraph_uniswap_pool_pair_usd (uses token1Price when target is token0, token0Price when target is token1). SUBGRAPH_API_KEY required.
+	"theGraphUniswapStylePool": {
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}",
+		Query:          `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price } _meta { block { timestamp } } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — uses native _meta.block.timestamp
 	},
 	"uniswapV3ethereum": {
-		// docs: https://docs.uniswap.org/api/subgraph/overview
-		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
-		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
-		Method:      "POST",
-		Timeout:     5000,
-		Headers:     map[string]string{"Content-Type": "application/json"},
-		ApiKey:      "${SUBGRAPH_API_KEY}",
+		// Ethereum Uniswap v3 subgraph on The Graph network gateway. Requires SUBGRAPH_API_KEY in the environment at reporter startup.
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+		Query:          `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — indexed data can lag behind chain head
 	},
 	"sushiswapKatana": {
 		// docs: https://docs.sushi.com/api/examples/pricing
-		URLTemplate: "https://api.sushi.com/price/v1/747474",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.sushi.com/price/v1/747474",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes
 	},
 }
 
@@ -121,7 +164,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"noble-dollar-usdn", "usd"},
 				Params: map[string]string{
 					"coin_id": "noble-dollar-usdn",
@@ -137,20 +180,50 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				},
 				MarketId: "USDN-USD",
 			},
+			{
+				EndpointType: "osmosis",
+				Handler:      "osmosis_pool_price_handler",
+				ResponsePath: []string{"pool"},
+				Params: map[string]string{
+					"pool_id":         "3061",
+					"target_token":    "ibc/0C39BD03B5C57A1753A9B73164705871A9B549F1A5226CFD7E39BE7BF73CF8CF",
+					"quote_token":     "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4",
+					"target_decimals": "6",
+					"quote_decimals":  "6",
+				},
+				UsdViaID: exchange_common.USDCUSD_ID,
+				MarketId: "USDN-USD",
+			},
 		},
 	},
 	"59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a": {
 		ID:                "59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a",
 		AggregationMethod: "median",
 		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
+		MinResponses:      2,
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"susds", "usd"},
 				Params: map[string]string{
 					"coin_id": "susds",
+				},
+				MarketId: "SUSDS-USD",
+			},
+			{
+				EndpointType: "coinpaprika",
+				ResponsePath: []string{"quotes", "USD", "price"},
+				Params: map[string]string{
+					"coin_id": "susds-susds",
+				},
+				MarketId: "SUSDS-USD",
+			},
+			{
+				EndpointType: "curve",
+				ResponsePath: []string{"data", "usd_price"},
+				Params: map[string]string{
+					"contract_address": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
 				},
 				MarketId: "SUSDS-USD",
 			},
@@ -194,7 +267,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"tbtc", "usd"},
 				Params: map[string]string{
 					"coin_id": "tbtc",
@@ -258,7 +331,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"lrt-squared", "usd"},
 				Params: map[string]string{
 					"coin_id": "lrt-squared",
@@ -329,16 +402,10 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "combined",
-				Handler:      "vyusd_price",
-				CombinedSources: map[string]string{
-					"ethereum": "contract:ethereum",
-				},
-				CombinedConfig: map[string]any{
-					"min_responses":      1,
-					"max_spread_percent": 100.0,
-				},
-				MarketId: "VYUSD-USD",
+				EndpointType: "contract",
+				Handler:      "yieldfi_vyusd_handler",
+				Chain:        "ethereum",
+				MarketId:     "VYUSD-USD",
 			},
 		},
 	},
@@ -353,21 +420,29 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				EndpointType: "combined",
 				Handler:      "susn_price",
 				CombinedSources: map[string]string{
-					"ethereum":    "contract:ethereum",
-					"coinpaprika": "rpc:coinpaprika",
-					"coingecko":   "rpc:coingecko",
+					"ethereum":     "contract:ethereum",
+					"coinpaprika":  "rpc:coinpaprika",
+					"coingeckoPro": "rpc:coingeckoPro",
+					"uniswap":      "rpc:theGraphUniswapStylePool",
 				},
 				CombinedConfig: map[string]any{
-					"min_responses":             1,
-					"max_spread_percent":        100.0,
-					"coinpaprika_response_path": []string{"quotes", "USD", "price"},
-					"coingecko_response_path":   []string{"noon-usn", "usd"},
-					"coingecko_params": map[string]string{
+					"min_responses":              1,
+					"max_spread_percent":         100.0,
+					"coinpaprika_response_path":  []string{"quotes", "USD", "price"},
+					"coingeckoPro_response_path": []string{"noon-usn", "usd"},
+					"coingeckoPro_params": map[string]string{
 						"coin_id": "noon-usn",
 					},
 					"coinpaprika_params": map[string]string{
 						"coin_id": "usn1-noon-usn",
 					},
+					// USN/USDT pool on Uniswap V3 (USN=token0, USDT=token1).
+					// token1Price = USDT per USN ≈ USD per USN.
+					"uniswap_params": map[string]any{
+						"subgraph_id": "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+						"pool_id":     "0x526cd4f72f2cc54d6a02a7fefc84753a826a5737",
+					},
+					"uniswap_response_path": []string{"data", "pool", "token1Price"},
 				},
 			},
 		},

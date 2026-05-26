@@ -26,10 +26,15 @@ type SUSDEUSD struct{}
 func (r *SUSDEUSD) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, SUSDE_CONTRACT, "convertToAssets(uint256) returns (uint256)", []string{"1000000000000000000"})
 	if err != nil {
 		return 0, fmt.Errorf("failed to call convertToAssets: %w", err)
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("susde: %w", err)
 	}
 
 	// Get SUSDE exchange rate from contract (how much USDE 1 SUSDE is worth)

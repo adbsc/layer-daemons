@@ -77,7 +77,7 @@ func TestKingContractCall(t *testing.T) {
 	// If any test succeeded, use the handler
 	if len(result) > 0 {
 		handler := &KingHandler{}
-		value, err := handler.FetchValue(ctx, r, nil)
+		value, err := handler.FetchValue(ctx, r, nil, 0)
 		if err != nil {
 			t.Logf("Handler failed: %v", err)
 		} else {

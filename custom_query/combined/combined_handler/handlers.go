@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	contractreader "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_reader"
 	rpcreader "github.com/tellor-io/layer-daemons/custom_query/rpc/rpc_reader"
@@ -19,6 +20,7 @@ type CombinedHandler interface {
 		priceCache *pricefeedservertypes.MarketToExchangePrices,
 		minResponses int,
 		maxSpreadPercent float64,
+		maxDataAge time.Duration,
 	) (float64, error)
 }
 

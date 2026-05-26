@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	reader "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_reader"
 	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
@@ -16,10 +17,15 @@ type KingHandler struct{}
 func (r *KingHandler) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, KING_CONTRACT, "fairValueOf(uint256)", []string{"1000000000000000000"})
 	if err != nil {
 		return 0, fmt.Errorf("failed to call fairValueOf: %w", err)
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("king: %w", err)
 	}
 
 	fmt.Printf("Result length: %d bytes\n", len(result))

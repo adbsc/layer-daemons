@@ -22,10 +22,15 @@ type WSTETHHandler struct{}
 func (s *WSTETHHandler) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, WSTETH_CONTRACT, "getStETHByWstETH(uint256) returns (uint256)", []string{"1000000000000000000"})
 	if err != nil {
 		return 0, err
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("wsteth: %w", err)
 	}
 
 	stEthPerWstEth := new(big.Int).SetBytes(result)

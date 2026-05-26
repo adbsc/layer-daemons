@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"time"
 
 	contractreader "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_reader"
 	rpcreader "github.com/tellor-io/layer-daemons/custom_query/rpc/rpc_reader"
@@ -28,7 +29,9 @@ func (h *SUSNPriceHandler) FetchValue(
 	_ *pricefeedservertypes.MarketToExchangePrices,
 	minResponses int,
 	maxSpreadPercent float64,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	// Validate we have the required readers
 	contractReader, exists := contractReaders["ethereum"]
 	if !exists {
@@ -57,6 +60,10 @@ func (h *SUSNPriceHandler) FetchValue(
 
 	// Wait for all fetches to complete
 	fetcher.Wait()
+
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("susn: %w", err)
+	}
 
 	conversionBytes, err := fetcher.GetContractBytes("conversion_rate")
 	if err != nil {

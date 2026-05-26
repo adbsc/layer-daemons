@@ -70,7 +70,7 @@ func TestStartNewClient_StopUnblocksWhenEthereumEnvIncomplete(t *testing.T) {
 	t.Setenv("ETH_RPC_URL_FALLBACK", "")
 
 	ctx := context.Background()
-	c := StartNewClient(ctx, log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips())
+	c := StartNewClient(ctx, log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips(), "tellor-1")
 
 	stopDone := make(chan struct{})
 	go func() {
@@ -83,4 +83,22 @@ func TestStartNewClient_StopUnblocksWhenEthereumEnvIncomplete(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Stop() blocked after init failure — daemonStartup / waitgroup regression")
 	}
+}
+
+func TestGetTokenBridgeContractAddress_UsesHardCodedMainnetContract(t *testing.T) {
+	c := newClient(log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips(), "tellor-1")
+	address, err := c.getTokenBridgeContractAddress()
+
+	require.NoError(t, err)
+	require.Equal(t, "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E", address.Hex())
+}
+
+func TestGetTokenBridgeContractAddress_UsesFallbackForCustomChain(t *testing.T) {
+	t.Setenv("TOKEN_BRIDGE_TEST_CONTRACT", "0x55355157703A44f7516FBB831333317E98944e32")
+
+	c := newClient(log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips(), "localnet")
+	address, err := c.getTokenBridgeContractAddress()
+
+	require.NoError(t, err)
+	require.Equal(t, "0x55355157703A44f7516FBB831333317E98944e32", address.Hex())
 }

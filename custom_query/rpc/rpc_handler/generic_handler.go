@@ -2,6 +2,7 @@ package rpchandler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -14,14 +15,39 @@ import (
 
 type GenericHandler struct{}
 
+// FetchValue fetches a price from a generic REST/JSON endpoint.
+//
+// Optional endpoint params for data age validation:
+//   - timestamp_path: dot-separated path to a timestamp field in the response (e.g. "last_updated_at").
+//   - timestamp_format: "unix", "unix_ms", or a Go time layout string; defaults to RFC3339.
+//
+// When timestamp_path is set the parsed field is used as the data time; otherwise the
+// fetch start time is used as a proxy.
 func (h *GenericHandler) FetchValue(
 	ctx context.Context, reader *reader.Reader, invert bool, usdViaID uint32,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	resp, err := reader.FetchJSON(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch JSON: %w", err)
 	}
+
+	// Determine data timestamp: use a configured field when available, else fetch time.
+	dataTime := fetchedAt
+	if tsPath := reader.Params["timestamp_path"]; tsPath != "" {
+		var raw map[string]any
+		if jsonErr := json.Unmarshal(resp, &raw); jsonErr == nil {
+			if t, parseErr := parseTimestampParam(raw, tsPath, reader.Params["timestamp_format"]); parseErr == nil {
+				dataTime = t
+			}
+		}
+	}
+	if err := checkDataAge(dataTime, maxDataAge); err != nil {
+		return 0, fmt.Errorf("generic handler: %w", err)
+	}
+
 	current, err := reader.ExtractValueFromJSON(resp, reader.ResponsePath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to extract value from JSON: %w", err)

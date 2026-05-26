@@ -22,6 +22,8 @@ type Reader struct {
 	Headers      map[string]string
 	ResponsePath []string
 	Query        string // For POST request bodies (e.g., GraphQL queries)
+	// Params is a shallow copy of endpoint params (e.g. target_token, quote_token) for handlers that need per-endpoint metadata.
+	Params map[string]string
 }
 
 type httpClient struct {
@@ -30,7 +32,7 @@ type httpClient struct {
 	method  string
 }
 
-func NewReader(url, method, query string, headers map[string]string, responsePath []string, timeout int) (*Reader, error) {
+func NewReader(url, method, query string, headers map[string]string, responsePath []string, timeout int, params map[string]string) (*Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("no RPC endpoint provided")
 	}
@@ -51,9 +53,21 @@ func NewReader(url, method, query string, headers map[string]string, responsePat
 		Headers:      headers,
 		ResponsePath: responsePath,
 		Query:        query,
+		Params:       cloneStringMap(params),
 	}
 
 	return reader, nil
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func (r *Reader) FetchJSON(ctx context.Context) ([]byte, error) {

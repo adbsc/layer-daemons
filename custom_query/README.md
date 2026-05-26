@@ -25,6 +25,12 @@ Each endpoint represents an API source:
 url_template = "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
 method = "GET"
 timeout = 5000
+
+[endpoints.coingeckoPro]
+url_template = "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}"
+method = "GET"
+timeout = 5000
+api_key = "${CGPRO_API_KEY}"
 ```
 
 Endpoints support:
@@ -33,6 +39,8 @@ Endpoints support:
 - Custom timeouts
 - API keys via environment variables (`${ENV_VAR_NAME}`)
 - Custom headers
+
+For generated defaults that use Coingecko Pro, set `CGPRO_API_KEY` in your `.env` file. See [`../env.example`](../env.example) for the expected variable names.
 
 ### 2. Queries
 
@@ -67,6 +75,16 @@ response_path = ["savings-dai", "usd"] # Path to extract the value from JSON res
 ## Example Use Case
 
 The example configuration fetches sDAI and Tellor token prices from multiple sources, ensuring data reliability through aggregation.
+
+## Testing a single query (`reporterd`)
+
+From the node home that contains `config/custom_query_config.toml`, run only one custom query (skips standard exchange/market tests):
+
+```bash
+reporterd --home <path-to-home> --test --test-query-id 03731257e35c49e44b267640126358e5decebdd8f18b5e8f229542ec86e318cf
+```
+
+`--test-query-id` requires `--test`. The id must match a `[queries.<id>]` section in `custom_query_config.toml`. The process exits with a non-zero status if that query fails.
 
 ## Adding New Queries
 

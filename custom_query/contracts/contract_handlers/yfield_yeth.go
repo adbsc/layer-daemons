@@ -26,10 +26,15 @@ type YieldFiYeth struct{}
 func (r *YieldFiYeth) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, YIELDFI_YETH_CONTRACT, "exchangeRate() returns (uint256)", nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to call exchangeRate: %w", err)
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("yieldfi-yeth: %w", err)
 	}
 
 	// Get yieldFi-yeth exchange rate from contract (how much ETH 1 yieldFi-yeth is worth)
