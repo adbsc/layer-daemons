@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tellor-io/layer-daemons/appconfig"
 	pricefeed_constants "github.com/tellor-io/layer-daemons/constants"
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
 	"github.com/tellor-io/layer-daemons/mocks"
@@ -23,7 +22,6 @@ import (
 	daemonserver "github.com/tellor-io/layer-daemons/server"
 	servertypes "github.com/tellor-io/layer-daemons/server/types/daemons"
 	pricefeed_types "github.com/tellor-io/layer-daemons/server/types/pricefeed"
-	"github.com/tellor-io/layer-daemons/testutil/appoptions"
 	"github.com/tellor-io/layer-daemons/testutil/client"
 	"github.com/tellor-io/layer-daemons/testutil/constants"
 	daemontestutils "github.com/tellor-io/layer-daemons/testutil/daemons"
@@ -281,7 +279,6 @@ func TestStart_InvalidConfig(t *testing.T) {
 func TestStop(t *testing.T) {
 	// Setup daemon and grpc servers.
 	daemonFlags := daemonflags.GetDefaultDaemonFlags()
-	appFlags := appconfig.GetFlagValuesFromOptions(appoptions.GetDefaultTestAppOptions("", nil))
 
 	// Configure and run daemon server.
 	daemonServer := daemonserver.NewServer(
@@ -302,18 +299,21 @@ func TestStop(t *testing.T) {
 	// pricetypes.RegisterQueryServer(grpcServer, &pricesQueryServer)
 
 	// Start gRPC server with cleanup.
+	ls, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcAddr := ls.Addr().String()
 	defer grpcServer.Stop()
 	go func() {
-		ls, err := net.Listen("tcp", appFlags.GrpcAddress)
-		require.NoError(t, err)
-		err = grpcServer.Serve(ls)
-		require.NoError(t, err)
+		if serveErr := grpcServer.Serve(ls); serveErr != nil {
+			// Ignore error on shutdown.
+			_ = serveErr
+		}
 	}()
 
 	client := StartNewClient(
 		grpc_util.Ctx,
 		daemonFlags,
-		appFlags.GrpcAddress,
+		grpcAddr,
 		log.NewNopLogger(),
 		&daemontypes.GrpcClientImpl{},
 		[]types.MarketParam{},

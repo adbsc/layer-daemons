@@ -112,6 +112,7 @@ func (pg *PriceGuard) ShouldSubmit(queryData []byte, newPrice float64) (bool, st
 			"lastPrice", lastPrice,
 			"newPrice", newPrice,
 		)
+		emitPriceGuardSkippedMetric(queryData, change*100, ReasonDeviation)
 		return false, reason
 	}
 

@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
@@ -15,8 +14,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
+	"github.com/tellor-io/layer-daemons/flags"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
-	"github.com/tellor-io/layer/utils"
+	bridgetypes "github.com/tellor-io/layer/x/bridge/types"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 
@@ -24,6 +24,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
@@ -31,18 +32,19 @@ const (
 	defaultQueryTimeout = 10 * time.Second
 	defaultTxTimeout    = 10 * time.Second
 	defaultRetryDelay   = 200 * time.Millisecond
+	maxRetryDelay       = 30 * time.Second
 )
 
 func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	prevQueryData := []byte{}
+	retryDelay := defaultRetryDelay
 	ticker := time.NewTicker(defaultRetryDelay)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Debug("MonitorCyclelistQuery: context canceled, exiting")
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
@@ -51,7 +53,19 @@ func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) 
 
 			if err != nil || querymeta == nil {
 				c.logger.Error("query failed", "error", err)
+				// Exponential backoff on error: 200ms → 400ms → … capped at 30s
+				retryDelay *= 2
+				if retryDelay > maxRetryDelay {
+					retryDelay = maxRetryDelay
+				}
+				ticker.Reset(retryDelay)
 				continue
+			}
+
+			// Reset delay on success
+			if retryDelay != defaultRetryDelay {
+				retryDelay = defaultRetryDelay
+				ticker.Reset(retryDelay)
 			}
 
 			mutex.Lock()
@@ -60,8 +74,6 @@ func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) 
 			if bytes.Equal(querydata, prevQueryData) || hasCommited {
 				continue
 			}
-
-			c.logger.Info("ReporterDaemon", "current query id in cycle list", hex.EncodeToString(utils.QueryIDFromData(querydata)))
 
 			// Handle report generation with timeout
 			txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)
@@ -97,7 +109,6 @@ func (c *Client) MonitorTokenBridgeReports(ctx context.Context, wg *sync.WaitGro
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Debug("MonitorTokenBridgeReports: context canceled, exiting")
 			return
 		case <-ticker.C:
 			txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)
@@ -126,13 +137,13 @@ func (c *Client) MonitorTokenBridgeReports(ctx context.Context, wg *sync.WaitGro
 
 func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+	retryDelay := defaultRetryDelay
 	ticker := time.NewTicker(defaultRetryDelay)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Debug("MonitorForTippedQueries: context canceled, exiting")
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
@@ -144,7 +155,21 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 			cancel()
 
 			if err != nil || len(res.Queries) == 0 {
+				if err != nil {
+					// Exponential backoff on error
+					retryDelay *= 2
+					if retryDelay > maxRetryDelay {
+						retryDelay = maxRetryDelay
+					}
+					ticker.Reset(retryDelay)
+				}
 				continue
+			}
+
+			// Reset delay on success
+			if retryDelay != defaultRetryDelay {
+				retryDelay = defaultRetryDelay
+				ticker.Reset(retryDelay)
 			}
 
 			status, err := c.cosmosCtx.Client.Status(ctx)
@@ -160,11 +185,11 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 				haveCommited := commitedIds[query.Id]
 				mutex.Unlock()
 				if height > query.Expiration || haveCommited ||
-					!strings.EqualFold(queryType, "SpotPrice") && !strings.EqualFold(queryType, "TRBBridgeV2") {
+					!strings.EqualFold(queryType, "SpotPrice") && !strings.EqualFold(queryType, "TRBBridge") {
 					continue
 				}
 
-				if strings.EqualFold(queryType, "TRBBridgeV2") {
+				if strings.EqualFold(queryType, "TRBBridge") {
 					mutex.Lock()
 					haveCommitedTip := depositTipMap[query.Id]
 					mutex.Unlock()
@@ -215,26 +240,34 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 		return
 	}
 
-	ticker := time.NewTicker(time.Duration(frequency) * time.Second)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Debug("WithdrawAndStakeEarnedRewardsPeriodically: context canceled, exiting")
 			return
-		case <-ticker.C:
-			valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
-			if valAddr == "" {
-				fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
-				continue
-			}
+		default:
+		}
 
-			withdrawMsg := &reportertypes.MsgWithdrawTip{
-				SelectorAddress:  c.accAddr.String(),
-				ValidatorAddress: valAddr,
+		valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
+		if valAddr == "" {
+			fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Duration(frequency) * time.Second):
 			}
-			c.trySend(ctx, TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
+			continue
+		}
+
+		withdrawMsg := &reportertypes.MsgWithdrawTip{
+			SelectorAddress:  c.accAddr.String(),
+			ValidatorAddress: valAddr,
+		}
+		c.trySend(ctx, TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(frequency) * time.Second):
 		}
 	}
 }
@@ -261,13 +294,12 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	unbondAmount := math.NewInt(int64(amount))
 	valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
 	if valAddr == "" {
-		fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+		fmt.Println("Returning from Auto Unbond Monitor due to no validator address env variable was found")
 		return
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Debug("AutoUnbondStakePeriodically: context canceled, exiting")
 			return
 		case <-ticker.C:
 			c.logger.Info("Trying to unbond stake")
@@ -289,9 +321,8 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 				}
 			}
 
-			maxStakeAbleToWithdraw := reporterStake.Mul(maxStakePercentage)
-
-			if maxStakeAbleToWithdraw.LT(math.LegacyNewDecFromInt(unbondAmount)) {
+			if shouldSkipAutoUnbond(reporterStake, maxStakePercentage, unbondAmount) {
+				maxStakeAbleToWithdraw := reporterStake.Mul(maxStakePercentage)
 				c.logger.Info("Not enough stake to withdraw", "reporterStake", reporterStake, "maxStakeAbleToWithdraw", maxStakeAbleToWithdraw)
 				continue
 			}
@@ -307,7 +338,97 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	}
 }
 
+func shouldSkipAutoUnbond(reporterStake, maxStakePercentage math.LegacyDec, unbondAmount math.Int) bool {
+	if !maxStakePercentage.GT(math.LegacyZeroDec()) {
+		return false
+	}
+	return reporterStake.Mul(maxStakePercentage).LT(math.LegacyNewDecFromInt(unbondAmount))
+}
+
+// AutoBridgeWalletExcessPeriodically watches the wallet balance once per day at the configured
+// UTC time. Whenever the balance exceeds --auto-balance-to-keep (loya), the excess (minus a
+// 1 TRB gas reserve) is bridged to the Ethereum address supplied by --auto-balance-bridge-to-eth-addr.
+func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	balanceToKeep := viper.GetUint64(flags.FlagAutoBalanceToKeep)
+	if balanceToKeep == 0 {
+		c.logger.Info("Auto balance-to-keep is disabled")
+		return
+	}
+
+	ethAddr, err := normalizeAutoBalanceEthAddr(viper.GetString(flags.FlagAutoBalanceBridgeToEthAddr))
+	if err != nil {
+		c.logger.Error("invalid auto-balance bridge address", "error", err)
+		return
+	}
+	hour, minute, err := parseAutoBalanceExecutionTime(viper.GetString(flags.FlagAutoBalanceExecutionTime))
+	if err != nil {
+		c.logger.Error("invalid auto-balance execution time", "error", err)
+		return
+	}
+
+	for {
+		now := time.Now().UTC()
+		next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, time.UTC)
+		if !now.Before(next) {
+			next = next.Add(24 * time.Hour)
+		}
+
+		select {
+		case <-ctx.Done():
+			c.logger.Info("Auto balance-to-keep stopped")
+			return
+		case <-time.After(time.Until(next)):
+		}
+
+		c.logger.Info("Auto balance-to-keep: checking wallet balance")
+
+		balResp, err := c.BankClient.Balance(ctx, &banktypes.QueryBalanceRequest{
+			Address: c.accAddr.String(),
+			Denom:   "loya",
+		})
+		if err != nil {
+			c.logger.Error("auto balance-to-keep: failed to query wallet balance", "error", err)
+			continue
+		}
+
+		walletBal := balResp.Balance.Amount
+		keepAmt := math.NewIntFromUint64(balanceToKeep)
+		// Reserve 1 TRB (1_000_000 loya) for future gas so the wallet can keep operating.
+		gasReserve := math.NewInt(1_000_000)
+		amountToBridge := walletBal.Sub(keepAmt).Sub(gasReserve)
+
+		if !amountToBridge.IsPositive() {
+			c.logger.Info(
+				"auto balance-to-keep: wallet below threshold, nothing to bridge",
+				"wallet_loya", walletBal.String(),
+				"keep_loya", keepAmt.String(),
+			)
+			continue
+		}
+
+		c.logger.Info(
+			"auto balance-to-keep: bridging excess",
+			"wallet_loya", walletBal.String(),
+			"keep_loya", keepAmt.String(),
+			"bridge_amount_loya", amountToBridge.String(),
+			"destination", "0x"+ethAddr,
+		)
+
+		msg := &bridgetypes.MsgWithdrawTokens{
+			Creator:   c.accAddr.String(),
+			Recipient: ethAddr,
+			Amount:    sdk.NewCoin("loya", amountToBridge),
+		}
+		c.trySend(ctx, TxChannelInfo{Msg: msg, isBridge: true, NumRetries: 0, QueryMetaId: 0})
+	}
+}
+
 func (c *Client) LogProcessStats() {
+	count := runtime.NumGoroutine()
+	c.logger.Info(fmt.Sprintf("Number of Goroutines: %d\n", count))
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 

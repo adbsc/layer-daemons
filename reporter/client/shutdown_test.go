@@ -78,6 +78,38 @@ func TestStartReporterDaemonTaskLoop_ExitsOnCancelledContext(t *testing.T) {
 	}
 }
 
+func TestWithdrawAndStakeEarnedRewardsPeriodically_ExitsOnCancelledContext(t *testing.T) {
+	c := NewClient(log.NewNopLogger(), "0.001loya")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.WithdrawAndStakeEarnedRewardsPeriodically(ctx, &wg)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WithdrawAndStakeEarnedRewardsPeriodically did not exit with canceled context")
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WithdrawAndStakeEarnedRewardsPeriodically did not call wg.Done")
+	}
+}
+
 // TestConcurrentTrySendDuringShutdown simulates the real shutdown race:
 // multiple monitor goroutines try to send to txChan while the context is
 // being canceled. None should panic.

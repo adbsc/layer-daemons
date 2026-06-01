@@ -17,6 +17,10 @@ const (
 	FlagPriceDaemonLoopDelayMs = "price-daemon-loop-delay-ms"
 
 	FlagKeyringBackend = "keyring-backend"
+
+	FlagAutoBalanceToKeep          = "auto-balance-to-keep"
+	FlagAutoBalanceExecutionTime   = "auto-balance-execution-time"
+	FlagAutoBalanceBridgeToEthAddr = "auto-balance-bridge-to-eth-addr"
 )
 
 // Shared flags contains configuration flags shared by all daemons.
